@@ -1,0 +1,8 @@
+# Environment variables (secrets)
+.env
+.env.*
+backend/.env
+frontend/.env.local
+
+# Optional: ignore generated/local storage
+storage/
