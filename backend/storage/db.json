@@ -1,30 +1,8 @@
 {
   "clothes": [
-    {
-      "id": "ed9952d18dae4b1dba2c9b525325698a",
-      "type": "top",
-      "filename": "e88f33f06e28444a89c476181eacd38d.jpg",
-      "tags": [],
-      "url": "/static/clothes/e88f33f06e28444a89c476181eacd38d.jpg"
-    },
-    {
-      "id": "df24037e8f4c4a4bb399ca2e57cabee9",
-      "type": "bottom",
-      "filename": "9b6a261de225460e8ebaa8a67a6b671b.png",
-      "tags": [
-        "streetwear",
-        "black",
-        "jeans"
-      ],
-      "url": "/static/clothes/9b6a261de225460e8ebaa8a67a6b671b.png"
-    }
-  ],
+    ],
   "refs": [
-    {
-      "id": "f9161ffdbdac44ff9c2aecbfb14e157d",
-      "filename": "e5c8237ee2684c4da94100b52d18f5f0.png",
-      "url": "/static/user/e5c8237ee2684c4da94100b52d18f5f0.png"
-    }
-  ],
+
+    ],
   "generations": []
 }

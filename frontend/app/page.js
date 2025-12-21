@@ -161,217 +161,216 @@ export default function Home() {
 
 
   return (
-    <main>
-      <h1>Outfit Picker</h1>
+    <main className="h-screen bg-neutral-50">
+      <div className="mx-auto flex h-full max-w-6xl gap-4 p-4">
+        {/* LEFT HALF */}
+        <div className="w-full overflow-y-auto rounded-2xl border bg-white p-4 lg:w-1/2">
+          <div className="mb-4">
+            <h1 className="text-2xl font-semibold">Outfit Picker</h1>
+            <p className="mt-1 text-sm text-neutral-600">
+              Backend health: <code className="rounded bg-neutral-100 px-1">{health}</code>
+            </p>
+            <p className="mt-1 text-sm text-neutral-600">
+              API_BASE: <code className="rounded bg-neutral-100 px-1">{API_BASE}</code>
+            </p>
+            <p className="mt-2 text-sm">
+              Status: <span className="text-neutral-700">{status || "idle"}</span>
+            </p>
+          </div>
 
-      <p>
-        Backend health: <code>{health}</code>
-      </p>
-      <p>
-        API_BASE: <code>{API_BASE}</code>
-      </p>
-
-      <hr />
-
-      {/* Phase 2: Uploads (keep barebones) */}
-      <section>
-        <h2>Wardrobe (Uploads)</h2>
-
-        <div>
-          <h3>Upload reference photo (you)</h3>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              const f = e.target.files && e.target.files[0];
-              if (f) uploadReference(f);
-            }}
-          />
-        </div>
-
-        <div>
-          <h3>Upload clothing</h3>
-
-          <label>
-            Type:{" "}
-            <select
-              value={clothingType}
-              onChange={(e) => setClothingType(e.target.value)}
-            >
-              <option value="top">top</option>
-              <option value="bottom">bottom</option>
-            </select>
-          </label>
-
-          <br />
-
-          <label>
-            Tags (comma separated):{" "}
+          {/* Upload reference */}
+          <section className="mb-4 rounded-xl border p-4">
+            <h2 className="text-lg font-medium">Reference Photo (You)</h2>
+            <p className="mt-1 text-sm text-neutral-600">Upload a photo of yourself.</p>
             <input
-              value={clothingTags}
-              onChange={(e) => setClothingTags(e.target.value)}
-              placeholder="streetwear, black, summer"
+              className="mt-3 block w-full text-sm"
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files && e.target.files[0];
+                if (f) uploadReference(f);
+              }}
             />
-          </label>
+          </section>
 
-          <br />
+          {/* Upload clothing */}
+          <section className="mb-4 rounded-xl border p-4">
+            <h2 className="text-lg font-medium">Upload Clothing</h2>
 
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => {
-              const f = e.target.files && e.target.files[0];
-              if (f) uploadClothing(f);
-            }}
-          />
-        </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-sm text-neutral-700">
+                Type:{" "}
+                <select
+                  className="ml-2 rounded-lg border px-2 py-1 text-sm"
+                  value={clothingType}
+                  onChange={(e) => setClothingType(e.target.value)}
+                >
+                  <option value="top">top</option>
+                  <option value="bottom">bottom</option>
+                </select>
+              </label>
 
-        <p>Status: {status}</p>
-      </section>
-
-      <hr />
-
-      {/* Phase 3: TWO carousels (tops + bottoms) */}
-      <section>
-        <h2>Try-on (Two Carousels)</h2>
-
-        <div>
-          <h3>Tops Carousel</h3>
-          <button
-            onClick={() => setTopIndex((i) => prevIndex(i, tops.length))}
-            disabled={tops.length === 0}
-          >
-            ← Prev
-          </button>{" "}
-          <button
-            onClick={() => setTopIndex((i) => nextIndex(i, tops.length))}
-            disabled={tops.length === 0}
-          >
-            Next →
-          </button>
-
-          <p>
-            {tops.length === 0 ? (
-              <em>No tops uploaded yet.</em>
-            ) : (
-              <>
-                Showing {topIndex + 1} / {tops.length} — id:{" "}
-                <code>{selectedTop?.id}</code>
-              </>
-            )}
-          </p>
-
-          {selectedTop && (
-            <div>
-              <div>
-                <strong>{selectedTop.filename}</strong>
-              </div>
-              <div>tags: {(selectedTop.tags || []).join(", ")}</div>
-              <img
-                src={`${API_BASE}${selectedTop.url}`}
-                alt="selected top"
-                width={220}
+              <input
+                className="flex-1 min-w-[220px] rounded-lg border px-3 py-2 text-sm"
+                value={clothingTags}
+                onChange={(e) => setClothingTags(e.target.value)}
+                placeholder="tags: streetwear, black, summer"
               />
             </div>
-          )}
-        </div>
 
-        <hr />
-
-        <div>
-          <h3>Bottoms Carousel</h3>
-          <button
-            onClick={() => setBottomIndex((i) => prevIndex(i, bottoms.length))}
-            disabled={bottoms.length === 0}
-          >
-            ← Prev
-          </button>{" "}
-          <button
-            onClick={() => setBottomIndex((i) => nextIndex(i, bottoms.length))}
-            disabled={bottoms.length === 0}
-          >
-            Next →
-          </button>
-
-          <p>
-            {bottoms.length === 0 ? (
-              <em>No bottoms uploaded yet.</em>
-            ) : (
-              <>
-                Showing {bottomIndex + 1} / {bottoms.length} — id:{" "}
-                <code>{selectedBottom?.id}</code>
-              </>
-            )}
-          </p>
-
-          {selectedBottom && (
-            <div>
-              <div>
-                <strong>{selectedBottom.filename}</strong>
-              </div>
-              <div>tags: {(selectedBottom.tags || []).join(", ")}</div>
-              <img
-                src={`${API_BASE}${selectedBottom.url}`}
-                alt="selected bottom"
-                width={220}
-              />
-            </div>
-          )}
-        </div>
-
-        <hr />
-
-        <div>
-          <h3>Theme + Generate</h3>
-          <label>
-            Theme/prompt:{" "}
             <input
+              className="mt-3 block w-full text-sm"
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const f = e.target.files && e.target.files[0];
+                if (f) uploadClothing(f);
+              }}
+            />
+          </section>
+
+          {/* Tops carousel */}
+          <section className="mb-4 rounded-xl border p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-medium">Tops</h2>
+              <div className="flex gap-2">
+                <button
+                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
+                  onClick={() => setTopIndex((i) => prevIndex(i, tops.length))}
+                  disabled={tops.length === 0}
+                >
+                  ← Prev
+                </button>
+                <button
+                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
+                  onClick={() => setTopIndex((i) => nextIndex(i, tops.length))}
+                  disabled={tops.length === 0}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+
+            {selectedTop ? (
+              <div className="mt-3">
+                <p className="text-sm text-neutral-700">
+                  <span className="font-medium">{selectedTop.filename}</span>
+                </p>
+                <p className="text-xs text-neutral-500">
+                  tags: {(selectedTop.tags || []).join(", ")}
+                </p>
+                <img
+                  className="mt-3 w-full max-w-sm rounded-xl border object-contain"
+                  src={`${API_BASE}${selectedTop.url}`}
+                  alt="selected top"
+                />
+                <p className="mt-2 text-xs text-neutral-500">
+                  id: <code className="rounded bg-neutral-100 px-1">{selectedTop.id}</code>
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-neutral-600">No tops uploaded yet.</p>
+            )}
+          </section>
+
+          {/* Bottoms carousel */}
+          <section className="mb-4 rounded-xl border p-4">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-medium">Bottoms</h2>
+              <div className="flex gap-2">
+                <button
+                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
+                  onClick={() => setBottomIndex((i) => prevIndex(i, bottoms.length))}
+                  disabled={bottoms.length === 0}
+                >
+                  ← Prev
+                </button>
+                <button
+                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
+                  onClick={() => setBottomIndex((i) => nextIndex(i, bottoms.length))}
+                  disabled={bottoms.length === 0}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+
+            {selectedBottom ? (
+              <div className="mt-3">
+                <p className="text-sm text-neutral-700">
+                  <span className="font-medium">{selectedBottom.filename}</span>
+                </p>
+                <p className="text-xs text-neutral-500">
+                  tags: {(selectedBottom.tags || []).join(", ")}
+                </p>
+                <img
+                  className="mt-3 w-full max-w-sm rounded-xl border object-contain"
+                  src={`${API_BASE}${selectedBottom.url}`}
+                  alt="selected bottom"
+                />
+                <p className="mt-2 text-xs text-neutral-500">
+                  id: <code className="rounded bg-neutral-100 px-1">{selectedBottom.id}</code>
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-neutral-600">No bottoms uploaded yet.</p>
+            )}
+          </section>
+
+          {/* Theme + Generate */}
+          <section className="rounded-xl border p-4">
+            <h2 className="text-lg font-medium">Theme + Generate</h2>
+
+            <input
+              className="mt-3 w-full rounded-lg border px-3 py-2 text-sm"
               value={theme}
               onChange={(e) => setTheme(e.target.value)}
-              placeholder="streetwear, formal, cozy winter..."
+              placeholder="theme: streetwear, formal, cozy winter..."
             />
-          </label>
-          <br />
-          <button onClick={handleGenerate} disabled={!selectedTop || !selectedBottom}>
-            Generate
-          </button>
-          {genError && <p>Error: {genError}</p>}
 
-          {outputUrl && (
-            <div>
-              <h4>Output</h4>
-              <img src={`${API_BASE}${outputUrl}`} alt="generated" width={320} />
-              <div>
-                <code>{outputUrl}</code>
-              </div>
-            </div>
-          )}
+            <button
+              className="mt-3 w-full rounded-lg bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+              onClick={handleGenerate}
+              disabled={!selectedTop || !selectedBottom}
+            >
+              Generate
+            </button>
 
-          <p>
-            Selected Top ID: <code>{selectedTop?.id ?? "none"}</code>
-            <br />
-            Selected Bottom ID: <code>{selectedBottom?.id ?? "none"}</code>
-          </p>
-
+            {genError && (
+              <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+                {genError}
+              </p>
+            )}
+          </section>
         </div>
-      </section>
 
-      <hr />
+        {/* RIGHT HALF */}
+        <div className="w-full overflow-hidden rounded-2xl border bg-white p-4 lg:w-1/2">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-lg font-medium">Generated Output</h2>
+            {outputUrl && (
+              <code className="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-700">
+                {outputUrl}
+              </code>
+            )}
+          </div>
 
-      {/* Keep these lists for debugging; delete later if you want */}
-      <section>
-        <h2>Debug Lists (Optional)</h2>
-
-        <h3>Reference photos</h3>
-        <ul>
-          {refs.map((r) => (
-            <li key={r.id}>
-              <div>{r.filename}</div>
-              <img src={`${API_BASE}${r.url}`} alt="ref" width={120} />
-            </li>
-          ))}
-        </ul>
-      </section>
+          <div className="flex h-[calc(100%-48px)] items-center justify-center rounded-xl border border-dashed bg-neutral-50 p-3">
+            {outputUrl ? (
+              <img
+                className="max-h-full max-w-full rounded-xl border object-contain"
+                src={`${API_BASE}${outputUrl}`}
+                alt="generated"
+              />
+            ) : (
+              <p className="text-sm text-neutral-600">
+                Your generated image will appear here.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
     </main>
   );
+
 }
