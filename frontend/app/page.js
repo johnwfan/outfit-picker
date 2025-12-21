@@ -26,6 +26,10 @@ export default function Home() {
   const selectedTop = tops.length > 0 ? tops[topIndex] : null;
   const selectedBottom = bottoms.length > 0 ? bottoms[bottomIndex] : null;
 
+  // generate ai
+  const [outputUrl, setOutputUrl] = useState("");
+  const [genError, setGenError] = useState("");
+
   async function refreshAll() {
     const h = await fetch(`${API_BASE}/health`).then((r) => r.json());
     setHealth(JSON.stringify(h));
@@ -101,16 +105,60 @@ export default function Home() {
     return (current + 1) % length;
   }
 
-  function handleGenerate() {
-    // Phase 4: call POST /generate with selectedTop.id, selectedBottom.id, theme
+  async function handleGenerate() {
+    setGenError("");
+    setOutputUrl("");
+    setStatus("Generating...");
+
     if (!selectedTop || !selectedBottom) {
-      alert("Upload at least one top and one bottom first.");
+      setGenError("Upload at least one top and one bottom first.");
+      setStatus("");
       return;
     }
-    alert(
-      `Generate (placeholder)\nTop: ${selectedTop.id}\nBottom: ${selectedBottom.id}\nTheme: ${theme}`
-    );
+
+    let res;
+    try {
+      res = await fetch(`${API_BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          top_id: selectedTop.id,
+          bottom_id: selectedBottom.id,
+          theme: theme,
+        }),
+      });
+    } catch (e) {
+      setGenError("Network error: " + String(e));
+      setStatus("");
+      return;
+    }
+
+    let data = {};
+    try {
+      data = await res.json();
+    } catch {
+      // If backend didn't return JSON
+    }
+
+    if (!res.ok || !data.ok) {
+      const msg = data.detail || data.error || `Generate failed (HTTP ${res.status})`;
+      setGenError(msg);
+      setStatus("");
+      return;
+    }
+
+    setOutputUrl(data.output_url);
+
+    // If backend fell back (quota/billing issue), show that in status
+    if (data.fallback) {
+      setStatus("Generated (fallback stub — quota/billing issue).");
+    } else if (data.cached) {
+      setStatus("Generated (cached).");
+    } else {
+      setStatus("Generated.");
+    }
   }
+
 
   return (
     <main>
@@ -285,14 +333,26 @@ export default function Home() {
           </label>
           <br />
           <button onClick={handleGenerate} disabled={!selectedTop || !selectedBottom}>
-            Generate (placeholder)
+            Generate
           </button>
+          {genError && <p>Error: {genError}</p>}
+
+          {outputUrl && (
+            <div>
+              <h4>Output</h4>
+              <img src={`${API_BASE}${outputUrl}`} alt="generated" width={320} />
+              <div>
+                <code>{outputUrl}</code>
+              </div>
+            </div>
+          )}
 
           <p>
             Selected Top ID: <code>{selectedTop?.id ?? "none"}</code>
             <br />
             Selected Bottom ID: <code>{selectedBottom?.id ?? "none"}</code>
           </p>
+
         </div>
       </section>
 
