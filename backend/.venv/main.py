@@ -106,6 +106,29 @@ def save_upload(file: UploadFile, folder: Path) -> str:
     out_path.write_bytes(content)
     return filename
 
+def safe_unlink(path: Path) -> bool:
+    try:
+        path.unlink()
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
+
+
+def delete_generation_files(db: dict[str, Any], gen_records: list[dict[str, Any]]) -> int:
+    """Delete output image files for a list of generation records."""
+    deleted = 0
+    for g in gen_records:
+        out_url = g.get("output_url", "")
+        # out_url is like "/static/outputs/<name>.png"
+        out_name = os.path.basename(out_url) if out_url else ""
+        if out_name:
+            out_path = OUTPUTS_DIR / out_name
+            if safe_unlink(out_path):
+                deleted += 1
+    return deleted
+
 
 # -----------------------------
 # App
@@ -199,6 +222,72 @@ def user_refs():
     db = load_db()
     return {"ok": True, "refs": db["refs"]}
 
+
+@app.delete("/clothing/{item_id}")
+def delete_clothing(item_id: str):
+    db = load_db()
+    clothes = db.get("clothes", [])
+    gens = db.get("generations", [])
+
+    item = next((c for c in clothes if c.get("id") == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="clothing id not found")
+
+    # Delete the clothing image file
+    filename = item.get("filename", "")
+    deleted_file = False
+    if filename:
+        deleted_file = safe_unlink(CLOTHES_DIR / filename)
+
+    # Remove clothing record from DB
+    db["clothes"] = [c for c in clothes if c.get("id") != item_id]
+
+    # Cascade delete generations that used this clothing
+    removed_gens = [g for g in gens if g.get("top_id") == item_id or g.get("bottom_id") == item_id]
+    db["generations"] = [g for g in gens if g not in removed_gens]
+
+    deleted_outputs = delete_generation_files(db, removed_gens)
+
+    save_db(db)
+    return {
+        "ok": True,
+        "deleted_clothing_file": deleted_file,
+        "removed_generations": len(removed_gens),
+        "deleted_output_files": deleted_outputs,
+    }
+
+
+@app.delete("/refs/{ref_id}")
+def delete_ref(ref_id: str):
+    db = load_db()
+    refs = db.get("refs", [])
+    gens = db.get("generations", [])
+
+    ref = next((r for r in refs if r.get("id") == ref_id), None)
+    if not ref:
+        raise HTTPException(status_code=404, detail="ref id not found")
+
+    filename = ref.get("filename", "")
+    deleted_file = False
+    if filename:
+        deleted_file = safe_unlink(USER_DIR / filename)
+
+    # Remove ref record from DB
+    db["refs"] = [r for r in refs if r.get("id") != ref_id]
+
+    # Cascade delete generations that used this ref
+    removed_gens = [g for g in gens if g.get("ref_id") == ref_id]
+    db["generations"] = [g for g in gens if g not in removed_gens]
+
+    deleted_outputs = delete_generation_files(db, removed_gens)
+
+    save_db(db)
+    return {
+        "ok": True,
+        "deleted_ref_file": deleted_file,
+        "removed_generations": len(removed_gens),
+        "deleted_output_files": deleted_outputs,
+    }
 
 # -----------------------------
 # Generation

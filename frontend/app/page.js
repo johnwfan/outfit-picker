@@ -95,6 +95,54 @@ export default function Home() {
     await refreshAll();
   }
 
+  async function deleteClothing(id) {
+  const ok = window.confirm("Delete this clothing item? This cannot be undone.");
+  if (!ok) return;
+
+  setStatus("Deleting clothing...");
+  setGenError("");
+  try {
+    const res = await fetch(`${API_BASE}/clothing/${id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      setGenError(data.detail || data.error || `Delete failed (HTTP ${res.status})`);
+      setStatus("");
+      return;
+    }
+    setStatus("Deleted.");
+    // If you deleted the currently shown output, clear it
+    setOutputUrl("");
+    await refreshAll();
+  } catch (e) {
+    setGenError("Network error: " + String(e));
+    setStatus("");
+  }
+}
+
+async function deleteRef(id) {
+  const ok = window.confirm("Delete this reference photo? This cannot be undone.");
+  if (!ok) return;
+
+  setStatus("Deleting reference...");
+  setGenError("");
+  try {
+    const res = await fetch(`${API_BASE}/refs/${id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      setGenError(data.detail || data.error || `Delete failed (HTTP ${res.status})`);
+      setStatus("");
+      return;
+    }
+    setStatus("Deleted.");
+    setOutputUrl("");
+    await refreshAll();
+  } catch (e) {
+    setGenError("Network error: " + String(e));
+    setStatus("");
+  }
+}
+
+
   function prevIndex(current, length) {
     if (length === 0) return 0;
     return (current - 1 + length) % length;
@@ -191,6 +239,21 @@ export default function Home() {
                 if (f) uploadReference(f);
               }}
             />
+            {refs.map((r) => (
+  <li key={r.id} className="mb-3">
+    <div className="text-sm">{r.filename}</div>
+    <img src={`${API_BASE}${r.url}`} alt="ref" width={120} />
+    <div>
+      <button
+        className="mt-1 rounded-lg border px-3 py-1 text-xs hover:bg-neutral-50"
+        onClick={() => deleteRef(r.id)}
+      >
+        Delete Reference Photo
+      </button>
+    </div>
+  </li>
+))}
+
           </section>
 
           {/* Upload clothing */}
@@ -271,6 +334,15 @@ export default function Home() {
             ) : (
               <p className="mt-3 text-sm text-neutral-600">No tops uploaded yet.</p>
             )}
+          {selectedTop && (
+<button
+  className="mt-2 rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+  onClick={() => deleteClothing(selectedTop.id)}
+>
+  Delete this top
+</button>
+)}
+
           </section>
 
           {/* Bottoms carousel */}
@@ -315,6 +387,15 @@ export default function Home() {
             ) : (
               <p className="mt-3 text-sm text-neutral-600">No bottoms uploaded yet.</p>
             )}
+            {selectedBottom && (
+  <button
+    className="mt-2 rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
+    onClick={() => deleteClothing(selectedBottom.id)}
+  >
+    Delete this bottom
+  </button>
+)}
+
           </section>
 
           {/* Theme + Generate */}
