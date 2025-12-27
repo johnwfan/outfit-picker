@@ -5,6 +5,7 @@ A local-first web app that lets you upload your wardrobe (tops + bottoms) + a re
 Built as a learning project to understand full-stack workflows: **Next.js frontend ↔ FastAPI backend ↔ file storage ↔ AI generation API**.
 
 ---
+<img width="956" height="916" alt="Screenshot 2025-12-27 034337" src="https://github.com/user-attachments/assets/9418054a-cce3-4b01-891f-9ff5d0e015de" />
 
 ## Features
 
