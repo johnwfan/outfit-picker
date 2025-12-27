@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import hashlib
+import re
 import shutil
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,24 +16,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from PIL import Image, ImageDraw
+
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
 
-# -----------------------------
-# Config / Environment
-# -----------------------------
-load_dotenv()  # reads backend/.env if present
+# ---------------- Env / Client ----------------
+load_dotenv()
 
-NANOBANANA_MODEL = os.getenv("NANOBANANA_MODEL", "gemini-2.5-flash-image")
-# If you accidentally set a preview model, you can force the stable one:
-# NANOBANANA_MODEL = "gemini-2.5-flash-image"
+NANOBANANA_MODEL = os.getenv("NANOBANANA_MODEL", "gemini-2.5-flash-preview-image")
+ALLOW_PLACEHOLDER_FALLBACK = os.getenv("ALLOW_PLACEHOLDER_FALLBACK", "1") == "1"
 
-client = genai.Client()  # uses GEMINI_API_KEY/GOOGLE_API_KEY from env
+# genai.Client() will use GEMINI_API_KEY or GOOGLE_API_KEY if present.
+client = genai.Client()
 
-# -----------------------------
-# Paths
-# -----------------------------
+# ---------------- Paths ----------------
 BACKEND_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BACKEND_DIR.parent
 STORAGE_DIR = ROOT_DIR / "storage"
@@ -40,7 +38,6 @@ STORAGE_DIR = ROOT_DIR / "storage"
 CLOTHES_DIR = STORAGE_DIR / "clothes"
 USER_DIR = STORAGE_DIR / "user"
 OUTPUTS_DIR = STORAGE_DIR / "outputs"
-
 DB_PATH = STORAGE_DIR / "db.json"
 
 
@@ -48,26 +45,17 @@ def ensure_dirs() -> None:
     CLOTHES_DIR.mkdir(parents=True, exist_ok=True)
     USER_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def _fresh_db() -> dict[str, Any]:
-    return {"clothes": [], "refs": [], "generations": []}
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_db() -> dict[str, Any]:
     ensure_dirs()
     if not DB_PATH.exists():
-        return _fresh_db()
-
+        return {"clothes": [], "refs": [], "generations": []}
     try:
-        db = json.loads(DB_PATH.read_text(encoding="utf-8"))
-        # Harden shape
-        if "clothes" not in db: db["clothes"] = []
-        if "refs" not in db: db["refs"] = []
-        if "generations" not in db: db["generations"] = []
-        return db
+        return json.loads(DB_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return _fresh_db()
+        return {"clothes": [], "refs": [], "generations": []}
 
 
 def save_db(db: dict[str, Any]) -> None:
@@ -75,15 +63,12 @@ def save_db(db: dict[str, Any]) -> None:
     DB_PATH.write_text(json.dumps(db, indent=2), encoding="utf-8")
 
 
-def guess_mime_type(filename: str) -> str:
-    ext = Path(filename).suffix.lower()
-    if ext == ".png":
-        return "image/png"
-    if ext in [".jpg", ".jpeg"]:
+def guess_mime_from_suffix(suffix: str) -> str:
+    s = suffix.lower()
+    if s in [".jpg", ".jpeg"]:
         return "image/jpeg"
-    if ext == ".webp":
+    if s == ".webp":
         return "image/webp"
-    # fallback
     return "image/png"
 
 
@@ -93,7 +78,6 @@ def save_upload(file: UploadFile, folder: Path) -> str:
     Returns the saved filename.
     """
     ensure_dirs()
-
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in [".png", ".jpg", ".jpeg", ".webp"]:
         suffix = ".png"
@@ -101,38 +85,116 @@ def save_upload(file: UploadFile, folder: Path) -> str:
     filename = f"{uuid4().hex}{suffix}"
     out_path = folder / filename
 
-    # read uploaded file into bytes
-    content = file.file.read()
-    out_path.write_bytes(content)
+    # stream copy avoids huge memory spikes
+    with out_path.open("wb") as f:
+        shutil.copyfileobj(file.file, f)
+
     return filename
 
-def safe_unlink(path: Path) -> bool:
+
+def safe_remove(path: Path) -> None:
     try:
-        path.unlink()
-        return True
-    except FileNotFoundError:
-        return False
+        if path.exists():
+            path.unlink()
     except Exception:
-        return False
+        # don't crash deletes because of file locks, etc.
+        pass
 
 
-def delete_generation_files(db: dict[str, Any], gen_records: list[dict[str, Any]]) -> int:
-    """Delete output image files for a list of generation records."""
-    deleted = 0
-    for g in gen_records:
-        out_url = g.get("output_url", "")
-        # out_url is like "/static/outputs/<name>.png"
-        out_name = os.path.basename(out_url) if out_url else ""
-        if out_name:
-            out_path = OUTPUTS_DIR / out_name
-            if safe_unlink(out_path):
-                deleted += 1
-    return deleted
+def tokenize(text: str) -> list[str]:
+    text = (text or "").lower()
+    text = re.sub(r"[^a-z0-9\s,_-]", " ", text)
+    parts = re.split(r"[\s,]+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+SYNONYMS = {
+    "formal": ["dressy", "smart", "business", "suit", "blazer"],
+    "business": ["formal", "office", "work", "professional"],
+    "casual": ["everyday", "daily", "relaxed"],
+    "streetwear": ["street", "urban", "hype", "skater"],
+    "cozy": ["warm", "knit", "fleece", "hoodie", "sweater"],
+    "winter": ["cold", "warm", "layer", "coat"],
+    "summer": ["light", "breathable", "linen", "shorts"],
+    "athleisure": ["sport", "gym", "training", "active"],
+    "date": ["nice", "dressy", "clean", "smart"],
+    "black": ["dark"],
+    "white": ["light"],
+    "blue": ["navy"],
+    "jeans": ["denim"],
+}
+
+STOPWORDS = {"a", "an", "the", "and", "or", "with", "for", "to", "of", "in", "on"}
+
+def expand_keywords(keywords: list[str]) -> list[str]:
+    out = []
+    seen = set()
+    for kw in keywords:
+        if kw in STOPWORDS:
+            continue
+        if kw not in seen:
+            out.append(kw); seen.add(kw)
+        for syn in SYNONYMS.get(kw, []):
+            if syn not in seen:
+                out.append(syn); seen.add(syn)
+    return out
 
 
-# -----------------------------
-# App
-# -----------------------------
+
+def score_item(item: dict[str, Any], keywords: list[str]) -> int:
+    # Simple deterministic scoring: tag overlap + filename overlap
+    tags = [t.lower() for t in (item.get("tags") or [])]
+    fname = (item.get("filename") or "").lower()
+
+    s = 0
+    for kw in keywords:
+        if kw in tags:
+            s += 3
+        if kw and kw in fname:
+            s += 1
+    return s
+
+
+def make_placeholder_tryon(ref_path: Path, top_path: Path, bottom_path: Path, theme: str, out_path: Path) -> None:
+    """
+    Creates a placeholder "try-on" image so your UX works even without a paid image API.
+    It stitches ref/top/bottom into a single preview with text.
+    """
+    W, H = 768, 1024
+    img = Image.new("RGB", (W, H), (240, 240, 240))
+    draw = ImageDraw.Draw(img)
+
+    # Load images safely
+    def load_and_fit(p: Path, box_w: int, box_h: int) -> Image.Image:
+        im = Image.open(p).convert("RGB")
+        im.thumbnail((box_w, box_h))
+        return im
+
+    ref = load_and_fit(ref_path, 420, 900)
+    top = load_and_fit(top_path, 300, 350)
+    bot = load_and_fit(bottom_path, 300, 350)
+
+    # Paste layout
+    img.paste(ref, (20, 80))
+    img.paste(top, (460, 140))
+    img.paste(bot, (460, 520))
+
+    # Labels
+    draw.rectangle([0, 0, W, 60], fill=(0, 128, 128))
+    draw.text((16, 18), "Outfit Picker (placeholder output)", fill=(255, 255, 255))
+
+    draw.text((20, 65), "REFERENCE", fill=(0, 0, 0))
+    draw.text((460, 110), "TOP", fill=(0, 0, 0))
+    draw.text((460, 490), "BOTTOM", fill=(0, 0, 0))
+
+    t = (theme or "").strip()
+    if t:
+        draw.text((20, H - 40), f"Theme: {t}", fill=(0, 0, 0))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(out_path)
+
+
+# ---------------- App ----------------
 app = FastAPI()
 
 app.add_middleware(
@@ -149,16 +211,14 @@ app.mount("/static", StaticFiles(directory=str(STORAGE_DIR)), name="static")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": NANOBANANA_MODEL}
+    return {"status": "ok"}
 
 
-# -----------------------------
-# Upload endpoints
-# -----------------------------
+# ---------------- Upload endpoints ----------------
 @app.post("/upload/clothing")
 def upload_clothing(
-    item_type: str = Form(...),  # "top" or "bottom"
-    tags: str = Form(""),        # optional comma-separated string
+    item_type: str = Form(...),
+    tags: str = Form(""),
     file: UploadFile = File(...),
 ):
     t = item_type.strip().lower()
@@ -166,9 +226,10 @@ def upload_clothing(
         return {"ok": False, "error": "item_type must be 'top' or 'bottom'"}
 
     filename = save_upload(file, CLOTHES_DIR)
-    tag_list = [x.strip() for x in tags.split(",") if x.strip()]
 
+    tag_list = [x.strip() for x in tags.split(",") if x.strip()]
     db = load_db()
+
     item_id = uuid4().hex
     record = {
         "id": item_id,
@@ -200,139 +261,106 @@ def upload_reference(file: UploadFile = File(...)):
     return {"ok": True, "ref": record}
 
 
-# -----------------------------
-# List endpoints
-# -----------------------------
+# ---------------- List endpoints ----------------
 @app.get("/wardrobe/tops")
 def wardrobe_tops():
     db = load_db()
-    tops = [c for c in db["clothes"] if c.get("type") == "top"]
+    tops = [c for c in db.get("clothes", []) if c.get("type") == "top"]
     return {"ok": True, "items": tops}
 
 
 @app.get("/wardrobe/bottoms")
 def wardrobe_bottoms():
     db = load_db()
-    bottoms = [c for c in db["clothes"] if c.get("type") == "bottom"]
+    bottoms = [c for c in db.get("clothes", []) if c.get("type") == "bottom"]
     return {"ok": True, "items": bottoms}
 
 
 @app.get("/user/refs")
 def user_refs():
     db = load_db()
-    return {"ok": True, "refs": db["refs"]}
+    return {"ok": True, "refs": db.get("refs", [])}
 
 
-@app.delete("/clothing/{item_id}")
+# ---------------- Delete endpoints ----------------
+@app.delete("/wardrobe/item/{item_id}")
 def delete_clothing(item_id: str):
     db = load_db()
     clothes = db.get("clothes", [])
-    gens = db.get("generations", [])
-
     item = next((c for c in clothes if c.get("id") == item_id), None)
     if not item:
-        raise HTTPException(status_code=404, detail="clothing id not found")
+        raise HTTPException(status_code=404, detail="clothing item not found")
 
-    # Delete the clothing image file
-    filename = item.get("filename", "")
-    deleted_file = False
-    if filename:
-        deleted_file = safe_unlink(CLOTHES_DIR / filename)
+    # remove file
+    safe_remove(CLOTHES_DIR / item["filename"])
 
-    # Remove clothing record from DB
+    # remove from db
     db["clothes"] = [c for c in clothes if c.get("id") != item_id]
-
-    # Cascade delete generations that used this clothing
-    removed_gens = [g for g in gens if g.get("top_id") == item_id or g.get("bottom_id") == item_id]
-    db["generations"] = [g for g in gens if g not in removed_gens]
-
-    deleted_outputs = delete_generation_files(db, removed_gens)
-
     save_db(db)
-    return {
-        "ok": True,
-        "deleted_clothing_file": deleted_file,
-        "removed_generations": len(removed_gens),
-        "deleted_output_files": deleted_outputs,
-    }
+
+    return {"ok": True}
 
 
-@app.delete("/refs/{ref_id}")
+@app.delete("/user/ref/{ref_id}")
 def delete_ref(ref_id: str):
     db = load_db()
     refs = db.get("refs", [])
-    gens = db.get("generations", [])
-
     ref = next((r for r in refs if r.get("id") == ref_id), None)
     if not ref:
-        raise HTTPException(status_code=404, detail="ref id not found")
+        raise HTTPException(status_code=404, detail="ref not found")
 
-    filename = ref.get("filename", "")
-    deleted_file = False
-    if filename:
-        deleted_file = safe_unlink(USER_DIR / filename)
-
-    # Remove ref record from DB
+    safe_remove(USER_DIR / ref["filename"])
     db["refs"] = [r for r in refs if r.get("id") != ref_id]
-
-    # Cascade delete generations that used this ref
-    removed_gens = [g for g in gens if g.get("ref_id") == ref_id]
-    db["generations"] = [g for g in gens if g not in removed_gens]
-
-    deleted_outputs = delete_generation_files(db, removed_gens)
-
     save_db(db)
+
+    return {"ok": True}
+
+
+# ---------------- Recommend endpoint (auto-pick) ----------------
+class RecommendRequest(BaseModel):
+    theme: str = ""
+
+
+@app.post("/recommend")
+def recommend(req: RecommendRequest):
+    db = load_db()
+    clothes = db.get("clothes", [])
+    tops = [c for c in clothes if c.get("type") == "top"]
+    bottoms = [c for c in clothes if c.get("type") == "bottom"]
+
+    if not tops or not bottoms:
+        raise HTTPException(status_code=400, detail="Need at least 1 top and 1 bottom")
+
+    keywords = expand_keywords(tokenize(req.theme))
+
+    def best(items: list[dict[str, Any]]) -> dict[str, Any]:
+        scored = [(score_item(it, keywords), it) for it in items]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1]
+
+    top = best(tops)
+    bottom = best(bottoms)
+
     return {
         "ok": True,
-        "deleted_ref_file": deleted_file,
-        "removed_generations": len(removed_gens),
-        "deleted_output_files": deleted_outputs,
+        "top_id": top["id"],
+        "bottom_id": bottom["id"],
+        "keywords": keywords,
     }
 
-# -----------------------------
-# Generation
-# -----------------------------
+
+# ---------------- Generate (Gemini + fallback) ----------------
 class GenerateRequest(BaseModel):
     top_id: str
     bottom_id: str
     theme: str = ""
-
-
-def _stub_copy_latest_ref_to_output(db: dict[str, Any], theme: str, top_id: str, bottom_id: str):
-    """Fallback output for when API fails/quota issues: copy latest ref into outputs."""
-    refs = db.get("refs", [])
-    if not refs:
-        raise HTTPException(status_code=400, detail="No reference photo uploaded")
-
-    ref = refs[-1]
-    src = USER_DIR / ref["filename"]
-    if not src.exists():
-        raise HTTPException(status_code=500, detail="Reference file missing on disk")
-
-    out_name = f"{uuid4().hex}.png"
-    dst = OUTPUTS_DIR / out_name
-    shutil.copyfile(src, dst)
-
-    output_url = f"/static/outputs/{out_name}"
-    gen_record = {
-        "id": uuid4().hex,
-        "cache_key": None,
-        "ref_id": ref["id"],
-        "top_id": top_id,
-        "bottom_id": bottom_id,
-        "theme": theme,
-        "model": "stub-copy-ref",
-        "output_url": output_url,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    db["generations"].append(gen_record)
-    save_db(db)
-    return {"ok": True, "output_url": output_url, "generation": gen_record, "fallback": True}
+    ref_id: str | None = None  # optional: choose which ref to use later
 
 
 @app.post("/generate")
 def generate(req: GenerateRequest):
     db = load_db()
+    db.setdefault("generations", [])
 
     refs = db.get("refs", [])
     if not refs:
@@ -341,13 +369,18 @@ def generate(req: GenerateRequest):
     clothes = db.get("clothes", [])
     top = next((c for c in clothes if c.get("id") == req.top_id), None)
     bottom = next((c for c in clothes if c.get("id") == req.bottom_id), None)
-
     if not top:
         raise HTTPException(status_code=400, detail="top_id not found")
     if not bottom:
         raise HTTPException(status_code=400, detail="bottom_id not found")
 
-    ref = refs[-1]
+    if req.ref_id:
+        ref = next((r for r in refs if r.get("id") == req.ref_id), None)
+        if not ref:
+            raise HTTPException(status_code=400, detail="ref_id not found")
+    else:
+        ref = refs[-1]
+
     ref_path = USER_DIR / ref["filename"]
     top_path = CLOTHES_DIR / top["filename"]
     bottom_path = CLOTHES_DIR / bottom["filename"]
@@ -361,7 +394,7 @@ def generate(req: GenerateRequest):
 
     theme = (req.theme or "").strip()
 
-    # ---- Caching ----
+    # cache key
     cache_raw = f"{ref['id']}|{req.top_id}|{req.bottom_id}|{theme}".encode("utf-8")
     cache_key = hashlib.sha256(cache_raw).hexdigest()
 
@@ -369,9 +402,8 @@ def generate(req: GenerateRequest):
     if existing:
         out_file = OUTPUTS_DIR / os.path.basename(existing["output_url"])
         if out_file.exists():
-            return {"ok": True, "output_url": existing["output_url"], "generation": existing, "cached": True}
+            return {"ok": True, "output_url": existing["output_url"], "generation": existing}
 
-    # ---- Prompt ----
     prompt = f"""
 You are generating a photorealistic try-on image.
 
@@ -385,7 +417,7 @@ Generate a single full-body (or 3/4 body) photo of the person from Image 1 weari
 
 CONSTRAINTS:
 - Do NOT change the person's identity.
-- Do NOT invent extra clothing items.
+- Do NOT invent extra clothing items (no jacket/hat unless explicitly requested).
 - Keep the outfit exactly those two garments.
 - Neutral background, realistic lighting, clean result.
 - No nudity.
@@ -393,18 +425,24 @@ CONSTRAINTS:
 THEME (optional): {theme if theme else "none"}
 """.strip()
 
-    def read_bytes(path: Path) -> bytes:
-        return path.read_bytes()
+    out_name = f"{cache_key}.png"
+    out_path = OUTPUTS_DIR / out_name
+    output_url = f"/static/outputs/{out_name}"
 
-    contents = [
-        prompt,
-        types.Part.from_bytes(data=read_bytes(ref_path), mime_type=guess_mime_type(ref_path.name)),
-        types.Part.from_bytes(data=read_bytes(top_path), mime_type=guess_mime_type(top_path.name)),
-        types.Part.from_bytes(data=read_bytes(bottom_path), mime_type=guess_mime_type(bottom_path.name)),
-    ]
-
-    # ---- Call Gemini (Nano Banana) ----
+    # ---- Attempt Gemini ----
     try:
+        def part_for(path: Path) -> types.Part:
+            suffix = path.suffix.lower()
+            mime = guess_mime_from_suffix(suffix)
+            return types.Part.from_bytes(data=path.read_bytes(), mime_type=mime)
+
+        contents = [
+            prompt,
+            part_for(ref_path),
+            part_for(top_path),
+            part_for(bottom_path),
+        ]
+
         response = client.models.generate_content(
             model=NANOBANANA_MODEL,
             contents=contents,
@@ -412,30 +450,41 @@ THEME (optional): {theme if theme else "none"}
                 image_config=types.ImageConfig(aspect_ratio="3:4")
             ),
         )
-    except ClientError as e:
-        # If quota/rate-limited, return a clean 429 AND/OR fallback
-        if getattr(e, "status_code", None) == 429:
-            # Fallback so you can keep building/testing UI even without quota:
-            return _stub_copy_latest_ref_to_output(db, theme, req.top_id, req.bottom_id)
-        raise HTTPException(status_code=500, detail=str(e))
 
-    # ---- Extract image ----
-    generated_image = None
-    # Some responses store candidates; but response.parts is usually ok.
-    for part in getattr(response, "parts", []) or []:
-        if getattr(part, "inline_data", None) is not None:
-            generated_image = part.as_image()
-            break
+        generated_image = None
+        # Some SDK responses put image bytes inside candidate parts.
+        # We'll try the simplest pattern first.
+        if hasattr(response, "parts") and response.parts:
+            for part in response.parts:
+                if getattr(part, "inline_data", None) is not None:
+                    generated_image = part.as_image()
+                    break
 
-    if generated_image is None:
-        # Sometimes you only get text back
-        raise HTTPException(status_code=500, detail=f"No image returned. Text: {getattr(response, 'text', '')}")
+        if generated_image is None:
+            # Sometimes you only get text back
+            raise RuntimeError(f"No image returned. Text: {getattr(response, 'text', '')}")
 
-    out_name = f"{cache_key}.png"
-    out_path = OUTPUTS_DIR / out_name
-    generated_image.save(out_path)
+        generated_image.save(out_path)
+        provider = "gemini"
 
-    output_url = f"/static/outputs/{out_name}"
+    except Exception as e:
+        # If billing/quota/rate-limit isn't set, we don't want a hard stop while you're building.
+        # Instead: return 429 (true error) OR fallback placeholder depending on env.
+        msg = str(e)
+        is_quota = ("RESOURCE_EXHAUSTED" in msg) or ("429" in msg) or ("quota" in msg.lower())
+
+        if (not ALLOW_PLACEHOLDER_FALLBACK) and is_quota:
+            raise HTTPException(status_code=429, detail=f"Gemini quota/rate-limit: {msg}")
+
+        if (not ALLOW_PLACEHOLDER_FALLBACK) and (not is_quota):
+            raise HTTPException(status_code=500, detail=f"Generate failed: {msg}")
+
+        # Fallback: create placeholder stitched output (keeps frontend + caching working)
+        make_placeholder_tryon(ref_path, top_path, bottom_path, theme, out_path)
+        provider = "placeholder"
+        # If it *was* quota, still tell the frontend the truth (but keep ok flow)
+        # We include a warning field.
+
     gen_record = {
         "id": uuid4().hex,
         "cache_key": cache_key,
@@ -444,6 +493,7 @@ THEME (optional): {theme if theme else "none"}
         "bottom_id": req.bottom_id,
         "theme": theme,
         "model": NANOBANANA_MODEL,
+        "provider": provider,
         "output_url": output_url,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

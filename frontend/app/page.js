@@ -19,6 +19,9 @@ export default function Home() {
   // carousel state (Phase 3)
   const [topIndex, setTopIndex] = useState(0);
   const [bottomIndex, setBottomIndex] = useState(0);
+  // reference carousel
+  const [refIndex, setRefIndex] = useState(0);
+  const selectedRef = refs.length > 0 ? refs[refIndex] : null;
 
   // try-on inputs
   const [theme, setTheme] = useState("");
@@ -43,7 +46,10 @@ export default function Home() {
     setBottoms(newBottoms);
 
     const refsRes = await fetch(`${API_BASE}/user/refs`).then((r) => r.json());
-    setRefs(refsRes.refs ?? []);
+const newRefs = refsRes.refs ?? [];
+setRefs(newRefs);
+setRefIndex((i) => (newRefs.length === 0 ? 0 : Math.min(i, newRefs.length - 1)));
+
 
     // Keep indices valid if list sizes changed
     // (e.g., first upload, or you later add delete)
@@ -95,52 +101,47 @@ export default function Home() {
     await refreshAll();
   }
 
-  async function deleteClothing(id) {
-  const ok = window.confirm("Delete this clothing item? This cannot be undone.");
-  if (!ok) return;
-
+async function deleteClothing(itemId) {
   setStatus("Deleting clothing...");
   setGenError("");
-  try {
-    const res = await fetch(`${API_BASE}/clothing/${id}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      setGenError(data.detail || data.error || `Delete failed (HTTP ${res.status})`);
-      setStatus("");
-      return;
-    }
-    setStatus("Deleted.");
-    // If you deleted the currently shown output, clear it
-    setOutputUrl("");
-    await refreshAll();
-  } catch (e) {
-    setGenError("Network error: " + String(e));
+
+  const res = await fetch(`${API_BASE}/wardrobe/item/${itemId}`, {
+    method: "DELETE",
+  });
+
+  let data = {};
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok || !data.ok) {
+    setGenError(data.detail || data.error || "Delete clothing failed");
     setStatus("");
+    return;
   }
+
+  setStatus("Clothing deleted.");
+  await refreshAll();
 }
 
-async function deleteRef(id) {
-  const ok = window.confirm("Delete this reference photo? This cannot be undone.");
-  if (!ok) return;
 
+async function deleteRef(refId) {
   setStatus("Deleting reference...");
   setGenError("");
-  try {
-    const res = await fetch(`${API_BASE}/refs/${id}`, { method: "DELETE" });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) {
-      setGenError(data.detail || data.error || `Delete failed (HTTP ${res.status})`);
-      setStatus("");
-      return;
-    }
-    setStatus("Deleted.");
-    setOutputUrl("");
-    await refreshAll();
-  } catch (e) {
-    setGenError("Network error: " + String(e));
+
+  const res = await fetch(`${API_BASE}/user/ref/${refId}`, { method: "DELETE" });
+
+  let data = {};
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok || !data.ok) {
+    setGenError(data.detail || data.error || "Delete ref failed");
     setStatus("");
+    return;
   }
+
+  setStatus("Reference deleted.");
+  await refreshAll();
 }
+
 
 
   function prevIndex(current, length) {
@@ -173,6 +174,7 @@ async function deleteRef(id) {
           top_id: selectedTop.id,
           bottom_id: selectedBottom.id,
           theme: theme,
+          ref_id: selectedRef ? selectedRef.id : null,
         }),
       });
     } catch (e) {
@@ -206,32 +208,62 @@ async function deleteRef(id) {
       setStatus("Generated.");
     }
   }
+async function handleAutoPick() {
+  setGenError("");
+  setStatus("Auto-picking...");
+
+  try {
+    const res = await fetch(`${API_BASE}/recommend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ theme }),
+    });
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      setGenError(data.detail || data.error || "Auto-pick failed");
+      setStatus("");
+      return;
+    }
+
+    const topId = data.top_id;
+    const bottomId = data.bottom_id;
+
+    const newTopIndex = tops.findIndex((t) => t.id === topId);
+    const newBottomIndex = bottoms.findIndex((b) => b.id === bottomId);
+
+    if (newTopIndex >= 0) setTopIndex(newTopIndex);
+    if (newBottomIndex >= 0) setBottomIndex(newBottomIndex);
+
+    setStatus("Auto-pick complete.");
+  } catch (e) {
+    setGenError("Auto-pick error: " + String(e));
+    setStatus("");
+  }
+}
 
 
   return (
-    <main className="h-screen bg-neutral-50">
-      <div className="mx-auto flex h-full max-w-6xl gap-4 p-4">
-        {/* LEFT HALF */}
-        <div className="w-full overflow-y-auto rounded-2xl border bg-white p-4 lg:w-1/2">
-          <div className="mb-4">
-            <h1 className="text-2xl font-semibold">Outfit Picker</h1>
-            <p className="mt-1 text-sm text-neutral-600">
-              Backend health: <code className="rounded bg-neutral-100 px-1">{health}</code>
-            </p>
-            <p className="mt-1 text-sm text-neutral-600">
-              API_BASE: <code className="rounded bg-neutral-100 px-1">{API_BASE}</code>
-            </p>
-            <p className="mt-2 text-sm">
-              Status: <span className="text-neutral-700">{status || "idle"}</span>
-            </p>
-          </div>
+  <div className="win-split">
+    {/* LEFT WINDOW */}
+    <div className="window win-pane">
+      <div className="title-bar">
+        <div className="title-bar-text">Outfit Picker</div>
+        <div className="title-bar-controls">
+          <button aria-label="Minimize" />
+          <button aria-label="Maximize" />
+          <button aria-label="Close" />
+        </div>
+      </div>
 
-          {/* Upload reference */}
-          <section className="mb-4 rounded-xl border p-4">
-            <h2 className="text-lg font-medium">Reference Photo (You)</h2>
-            <p className="mt-1 text-sm text-neutral-600">Upload a photo of yourself.</p>
+      <div className="window-body win-scroll">
+
+        <fieldset>
+          <legend>Reference Photo (You)</legend>
+
+          <div className="field-row-stacked">
+            <label>Upload a photo of yourself</label>
             <input
-              className="mt-3 block w-full text-sm"
               type="file"
               accept="image/*"
               onChange={(e) => {
@@ -239,50 +271,85 @@ async function deleteRef(id) {
                 if (f) uploadReference(f);
               }}
             />
-            {refs.map((r) => (
-  <li key={r.id} className="mb-3">
-    <div className="text-sm">{r.filename}</div>
-    <img src={`${API_BASE}${r.url}`} alt="ref" width={120} />
-    <div>
-      <button
-        className="mt-1 rounded-lg border px-3 py-1 text-xs hover:bg-neutral-50"
-        onClick={() => deleteRef(r.id)}
-      >
-        Delete Reference Photo
-      </button>
-    </div>
-  </li>
-))}
+          </div>
 
-          </section>
+          <br />
+      {refs.length > 0 && (
+        <>
+          <div className="field-row">
+            <button
+              onClick={() => setRefIndex((i) => prevIndex(i, refs.length))}
+              disabled={refs.length === 0}
+            >
+              ◀ Prev
+            </button>
+            <button
+              onClick={() => setRefIndex((i) => nextIndex(i, refs.length))}
+              disabled={refs.length === 0}
+            >
+              Next ▶
+            </button>
+          </div>
 
-          {/* Upload clothing */}
-          <section className="mb-4 rounded-xl border p-4">
-            <h2 className="text-lg font-medium">Upload Clothing</h2>
+    <p>
+      Using ref {refIndex + 1}/{refs.length} — id: <code>{selectedRef?.id}</code>
+    </p>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="text-sm text-neutral-700">
-                Type:{" "}
-                <select
-                  className="ml-2 rounded-lg border px-2 py-1 text-sm"
-                  value={clothingType}
-                  onChange={(e) => setClothingType(e.target.value)}
-                >
-                  <option value="top">top</option>
-                  <option value="bottom">bottom</option>
-                </select>
-              </label>
+    {selectedRef && (
+      <img src={`${API_BASE}${selectedRef.url}`} alt="selected ref" width={160} />
+    )}
+  </>
+)}
 
-              <input
-                className="flex-1 min-w-[220px] rounded-lg border px-3 py-2 text-sm"
-                value={clothingTags}
-                onChange={(e) => setClothingTags(e.target.value)}
-                placeholder="tags: streetwear, black, summer"
-              />
-            </div>
+          {refs.length === 0 ? (
+            <p>No reference photos yet.</p>
+          ) : (
+            
+            <ul>
+              {refs.map((r) => (
+                <li key={r.id}>
+                  <div>
+                    <strong>{r.filename}</strong>
+                  </div>
+                  <img src={`${API_BASE}${r.url}`} alt="ref" width={140} />
+                  <div className="field-row" style={{ marginTop: 6 }}>
+                    <button onClick={() => deleteRef(r.id)}>Delete Reference Photo</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </fieldset>
 
+        <br />
+
+        <fieldset>
+          <legend>Upload Clothing</legend>
+
+          <div className="field-row">
+            <label htmlFor="clothingType">Type</label>
+            <select
+              id="clothingType"
+              value={clothingType}
+              onChange={(e) => setClothingType(e.target.value)}
+            >
+              <option value="top">top</option>
+              <option value="bottom">bottom</option>
+            </select>
+          </div>
+
+          <div className="field-row-stacked">
+            <label>Tags (comma separated)</label>
             <input
-              className="mt-3 block w-full text-sm"
+              value={clothingTags}
+              onChange={(e) => setClothingTags(e.target.value)}
+              placeholder="streetwear, black, summer"
+            />
+          </div>
+
+          <div className="field-row-stacked">
+            <label>Image file</label>
+            <input
               type="file"
               accept="image/*"
               onChange={(e) => {
@@ -290,168 +357,152 @@ async function deleteRef(id) {
                 if (f) uploadClothing(f);
               }}
             />
-          </section>
+          </div>
+        </fieldset>
 
-          {/* Tops carousel */}
-          <section className="mb-4 rounded-xl border p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-medium">Tops</h2>
-              <div className="flex gap-2">
-                <button
-                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
-                  onClick={() => setTopIndex((i) => prevIndex(i, tops.length))}
-                  disabled={tops.length === 0}
-                >
-                  ← Prev
-                </button>
-                <button
-                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
-                  onClick={() => setTopIndex((i) => nextIndex(i, tops.length))}
-                  disabled={tops.length === 0}
-                >
-                  Next →
-                </button>
-              </div>
-            </div>
+        <br />
 
-            {selectedTop ? (
-              <div className="mt-3">
-                <p className="text-sm text-neutral-700">
-                  <span className="font-medium">{selectedTop.filename}</span>
-                </p>
-                <p className="text-xs text-neutral-500">
-                  tags: {(selectedTop.tags || []).join(", ")}
-                </p>
-                <img
-                  className="mt-3 w-full max-w-sm rounded-xl border object-contain"
-                  src={`${API_BASE}${selectedTop.url}`}
-                  alt="selected top"
-                />
-                <p className="mt-2 text-xs text-neutral-500">
-                  id: <code className="rounded bg-neutral-100 px-1">{selectedTop.id}</code>
-                </p>
-              </div>
-            ) : (
-              <p className="mt-3 text-sm text-neutral-600">No tops uploaded yet.</p>
-            )}
-          {selectedTop && (
-<button
-  className="mt-2 rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-  onClick={() => deleteClothing(selectedTop.id)}
->
-  Delete this top
-</button>
-)}
+        <fieldset>
+          <legend>Tops</legend>
 
-          </section>
+          <div className="field-row">
+            <button
+              onClick={() => setTopIndex((i) => prevIndex(i, tops.length))}
+              disabled={tops.length === 0}
+            >
+              ◀ Prev
+            </button>
+            <button
+              onClick={() => setTopIndex((i) => nextIndex(i, tops.length))}
+              disabled={tops.length === 0}
+            >
+              Next ▶
+            </button>
+          </div>
 
-          {/* Bottoms carousel */}
-          <section className="mb-4 rounded-xl border p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-medium">Bottoms</h2>
-              <div className="flex gap-2">
-                <button
-                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
-                  onClick={() => setBottomIndex((i) => prevIndex(i, bottoms.length))}
-                  disabled={bottoms.length === 0}
-                >
-                  ← Prev
-                </button>
-                <button
-                  className="rounded-lg border bg-white px-3 py-2 text-sm hover:bg-neutral-50 disabled:opacity-50"
-                  onClick={() => setBottomIndex((i) => nextIndex(i, bottoms.length))}
-                  disabled={bottoms.length === 0}
-                >
-                  Next →
+          {selectedTop ? (
+            <>
+              <p>
+                <strong>{selectedTop.filename}</strong>
+                <br />
+                tags: {(selectedTop.tags || []).join(", ")}
+                <br />
+                id: <code>{selectedTop.id}</code>
+              </p>
+              <img
+                src={`${API_BASE}${selectedTop.url}`}
+                alt="selected top"
+                width={240}
+              />
+              <div className="field-row" style={{ marginTop: 6 }}>
+                <button onClick={() => deleteClothing(selectedTop.id)}>
+                  Delete this top
                 </button>
               </div>
-            </div>
+            </>
+          ) : (
+            <p>No tops uploaded yet.</p>
+          )}
+        </fieldset>
 
-            {selectedBottom ? (
-              <div className="mt-3">
-                <p className="text-sm text-neutral-700">
-                  <span className="font-medium">{selectedBottom.filename}</span>
-                </p>
-                <p className="text-xs text-neutral-500">
-                  tags: {(selectedBottom.tags || []).join(", ")}
-                </p>
-                <img
-                  className="mt-3 w-full max-w-sm rounded-xl border object-contain"
-                  src={`${API_BASE}${selectedBottom.url}`}
-                  alt="selected bottom"
-                />
-                <p className="mt-2 text-xs text-neutral-500">
-                  id: <code className="rounded bg-neutral-100 px-1">{selectedBottom.id}</code>
-                </p>
+        <br />
+
+        <fieldset>
+          <legend>Bottoms</legend>
+
+          <div className="field-row">
+            <button
+              onClick={() => setBottomIndex((i) => prevIndex(i, bottoms.length))}
+              disabled={bottoms.length === 0}
+            >
+              ◀ Prev
+            </button>
+            <button
+              onClick={() => setBottomIndex((i) => nextIndex(i, bottoms.length))}
+              disabled={bottoms.length === 0}
+            >
+              Next ▶
+            </button>
+          </div>
+
+          {selectedBottom ? (
+            <>
+              <p>
+                <strong>{selectedBottom.filename}</strong>
+                <br />
+                tags: {(selectedBottom.tags || []).join(", ")}
+                <br />
+                id: <code>{selectedBottom.id}</code>
+              </p>
+              <img
+                src={`${API_BASE}${selectedBottom.url}`}
+                alt="selected bottom"
+                width={240}
+              />
+              <div className="field-row" style={{ marginTop: 6 }}>
+                <button onClick={() => deleteClothing(selectedBottom.id)}>
+                  Delete this bottom
+                </button>
               </div>
-            ) : (
-              <p className="mt-3 text-sm text-neutral-600">No bottoms uploaded yet.</p>
-            )}
-            {selectedBottom && (
-  <button
-    className="mt-2 rounded-lg border px-3 py-2 text-sm hover:bg-neutral-50"
-    onClick={() => deleteClothing(selectedBottom.id)}
-  >
-    Delete this bottom
-  </button>
-)}
+            </>
+          ) : (
+            <p>No bottoms uploaded yet.</p>
+          )}
+        </fieldset>
 
-          </section>
+        <br />
 
-          {/* Theme + Generate */}
-          <section className="rounded-xl border p-4">
-            <h2 className="text-lg font-medium">Theme + Generate</h2>
+        <fieldset>
+          <legend>Theme + Generate</legend>
 
+          <div className="field-row-stacked">
+            <label>Theme/prompt</label>
             <input
-              className="mt-3 w-full rounded-lg border px-3 py-2 text-sm"
               value={theme}
               onChange={(e) => setTheme(e.target.value)}
-              placeholder="theme: streetwear, formal, cozy winter..."
+              placeholder="streetwear, formal, cozy winter..."
             />
-
-            <button
-              className="mt-3 w-full rounded-lg bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              onClick={handleGenerate}
-              disabled={!selectedTop || !selectedBottom}
-            >
-              Generate
-            </button>
-
-            {genError && (
-              <p className="mt-3 rounded-lg border border-red-200 bg-red-50 p-2 text-sm text-red-700">
-                {genError}
-              </p>
-            )}
-          </section>
-        </div>
-
-        {/* RIGHT HALF */}
-        <div className="w-full overflow-hidden rounded-2xl border bg-white p-4 lg:w-1/2">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-medium">Generated Output</h2>
-            {outputUrl && (
-              <code className="truncate rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-700">
-                {outputUrl}
-              </code>
-            )}
           </div>
 
-          <div className="flex h-[calc(100%-48px)] items-center justify-center rounded-xl border border-dashed bg-neutral-50 p-3">
-            {outputUrl ? (
-              <img
-                className="max-h-full max-w-full rounded-xl border object-contain"
-                src={`${API_BASE}${outputUrl}`}
-                alt="generated"
-              />
-            ) : (
-              <p className="text-sm text-neutral-600">
-                Your generated image will appear here.
-              </p>
-            )}
-          </div>
+          <div className="field-row" style={{ marginTop: 6 }}>
+  <button onClick={handleAutoPick} disabled={!theme.trim()}>
+    Auto-pick from theme
+  </button>
+  <button onClick={handleGenerate} disabled={!selectedTop || !selectedBottom}>
+    Generate
+  </button>
+</div>
+
+          {genError && (
+            <p style={{ marginTop: 8 }}>
+              <strong>Error:</strong> {genError}
+            </p>
+          )}
+        </fieldset>
+      </div>
+    </div>
+
+    {/* RIGHT WINDOW */}
+    <div className="window win-pane">
+      <div className="title-bar">
+        <div className="title-bar-text">Generated Output</div>
+        <div className="title-bar-controls">
+          <button aria-label="Minimize" />
+          <button aria-label="Maximize" />
+          <button aria-label="Close" />
         </div>
       </div>
-    </main>
-  );
+
+      <div className="window-body win-preview">
+        {outputUrl ? (
+          <img src={`${API_BASE}${outputUrl}`} alt="generated" />
+        ) : (
+          <p>Your generated image will appear here.</p>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
 
 }
